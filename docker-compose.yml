@@ -1,0 +1,106 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: bsf-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-bsf2020}
+      MYSQL_USER: ${MYSQL_USER:-bsf}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-bsf}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # *.sql files here are executed once, on first init, in alphabetical order.
+      - ./backend/migrations/mysql:/docker-entrypoint-initdb.d:ro
+    command: --default-authentication-plugin=caching_sha2_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:7.0
+    container_name: bsf-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-bsf}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-bsf}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-bsf2020}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: bsf-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # The Rust matching engine. Under the same profile as the app; the app talks to
+  # it via ENGINE_URL. Run DBs-only for local dev and this stays down.
+  engine:
+    build:
+      context: ./engine-rs
+      dockerfile: Dockerfile
+    container_name: bsf-engine
+    restart: unless-stopped
+    profiles: ["app"]
+    ports:
+      - "${ENGINE_PORT:-9090}:9090"
+
+  # The Go modular-monolith app. Under a profile so you can run DBs alone during
+  # local dev and run the app on the host with `go run ./cmd/server`.
+  # Enable with: docker compose --profile app up --build
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bsf-app
+    restart: unless-stopped
+    profiles: ["app"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      engine:
+        condition: service_started
+    environment:
+      APP_ENV: docker
+      HTTP_PORT: "8080"
+      MYSQL_DSN: ${MYSQL_USER:-bsf}:${MYSQL_PASSWORD:-bsf}@tcp(mysql:3306)/${MYSQL_DATABASE:-bsf2020}?parseTime=true&charset=utf8mb4&loc=UTC
+      MONGO_URI: mongodb://${MONGO_USER:-bsf}:${MONGO_PASSWORD:-bsf}@mongo:27017/${MONGO_DATABASE:-bsf2020}?authSource=admin
+      MONGO_DB: ${MONGO_DATABASE:-bsf2020}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
+      ENGINE_URL: http://engine:9090
+      SDA_USERNAME: ${SDA_USERNAME:-bsf}
+      SDA_PASSWORD: ${SDA_PASSWORD:-Bsf@12345}
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+
+volumes:
+  mysql_data:
+  mongo_data:
+  redis_data:
