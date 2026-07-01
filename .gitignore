@@ -1,0 +1,29 @@
+# env
+.env
+*.local
+
+# local portable databases / data
+.localdb/
+
+# Go
+backend/bin/
+backend/tmp/
+*.exe
+*.out
+
+# Rust
+engine-rs/target/
+
+# Node / React
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

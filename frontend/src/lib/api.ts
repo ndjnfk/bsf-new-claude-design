@@ -151,21 +151,28 @@ export type Series = { id: number; sportId: number; name: string; isManual: bool
 export const listSports = () => unwrap<Sport[] | null>(api.get('/api/sports'))
 export const toggleSport = (id: number, active: boolean) =>
   unwrap<unknown>(api.put(`/api/sports/${id}`, { active }))
-export const listMatches = (sportId?: number, seriesId?: number) =>
+export const listMatches = (sportId?: number, seriesId?: number, live?: boolean) =>
   unwrap<Match[] | null>(api.get('/api/sports/matches', {
-    params: { ...(sportId ? { sportId } : {}), ...(seriesId ? { seriesId } : {}) },
+    params: { ...(sportId ? { sportId } : {}), ...(seriesId ? { seriesId } : {}), ...(live ? { live: 1 } : {}) },
   }))
 export const blockMatch = (id: number, blocked: boolean) =>
   unwrap<unknown>(api.put(`/api/sports/matches/${id}/block`, { blocked }))
 
 // ---- Betting ----
 export type Bet = {
-  id: string; userId: number; marketId: string; selection: string; side: string
+  id: string; userId: number; matchId: number; marketId: string; selection: string; side: string
   price: number; stake: number; matchedSize: number; exposure: number; createdAt: string
   settled?: boolean; pl?: number
 }
-export const listBets = (params?: { marketId?: string; userId?: number; matchId?: number; betType?: string }) =>
+export type BetFilter = {
+  marketId?: string; userId?: number; matchId?: number; betType?: string
+  settled?: 'open' | 'settled' | 'all'; from?: string; to?: string
+}
+export const listBets = (params?: BetFilter) =>
   unwrap<Bet[] | null>(api.get('/api/betting/bets', { params }))
+export type DeletedBet = Bet & { deletedAt?: string; deletedBy?: string }
+export const listDeletedBets = (params?: { matchId?: number; userId?: number; from?: string; to?: string }) =>
+  unwrap<DeletedBet[] | null>(api.get('/api/betting/deleted', { params }))
 export const deleteBet = (id: string) => unwrap<unknown>(api.delete(`/api/betting/bets/${id}`))
 
 // ---- Reports ----
@@ -448,7 +455,7 @@ export const setCatalogBlock = (itemType: 'sport' | 'series' | 'match' | 'market
 
 // ---- Third-party events feed (Super Duper Admin only) — failover wrapper ----
 export type FeedSport = { id: string; name: string }
-export type FeedSeries = { id: string; sportId: string; name: string }
+export type FeedSeries = { id: string; sportId: string; name: string; activated: boolean; localId: number }
 export type FeedRunner = { id: string; name: string; status: string }
 export type FeedMarket = { id: string; name: string; type: string; status: string; runners: FeedRunner[] }
 export type FeedMatch = {
@@ -462,6 +469,19 @@ export const feedSports = () => unwrap<FeedSport[] | null>(api.get('/api/feed/sp
 // Import ("activate") a feed event into our catalog; returns our local match id.
 export const feedActivate = (eid: string) =>
   unwrap<{ matchId: number; activated: boolean }>(api.post('/api/feed/activate', { eid }))
+// Streamlined Series/Match Activate — merged feed + our catalog, with toggle.
+export type CatalogRow = {
+  feedId: string; localId: number; name: string; active: boolean
+  seriesName?: string; startTime?: string; inPlay?: boolean
+}
+export const feedSeriesList = (sportId: string) =>
+  unwrap<CatalogRow[] | null>(api.get('/api/feed/series-list', { params: { sportId } }))
+export const feedMatchList = (sportId: string) =>
+  unwrap<CatalogRow[] | null>(api.get('/api/feed/match-list', { params: { sportId } }))
+export const feedToggleSeries = (body: { feedId: string; localId: number; on: boolean }) =>
+  unwrap<unknown>(api.post('/api/feed/toggle-series', body))
+export const feedToggleMatch = (body: { feedId: string; localId: number; on: boolean }) =>
+  unwrap<unknown>(api.post('/api/feed/toggle-match', body))
 
 export type ReadyResponse = { status: 'ready' | 'degraded'; checks: Record<string, string> }
 export const getReady = async (): Promise<ReadyResponse> => {

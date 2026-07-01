@@ -5,11 +5,13 @@ package wallet
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 
+	"bsf2020/pkg/events"
 	"bsf2020/pkg/httpx"
 	"bsf2020/pkg/middleware"
 )
@@ -39,11 +41,24 @@ type Statement struct {
 type Module struct {
 	db       *sqlx.DB
 	accounts Accounts
+	pub      events.Publisher
 }
 
-// New builds the wallet module.
-func New(db *sqlx.DB, accounts Accounts) *Module {
-	return &Module{db: db, accounts: accounts}
+// New builds the wallet module. pub may be nil (realtime disabled), in which case
+// balance-change notifications are simply skipped.
+func New(db *sqlx.DB, accounts Accounts, pub events.Publisher) *Module {
+	return &Module{db: db, accounts: accounts, pub: pub}
+}
+
+// notifyBalance nudges a user's panel to re-read live coins/exposure after their
+// balance moves. Joined room: USER_UPDATE_DATA:<userID>. Fire-and-forget.
+func (m *Module) notifyBalance(ctx context.Context, userID int64) {
+	if m.pub == nil || userID == 0 {
+		return
+	}
+	bal, _ := m.accounts.GetBalance(ctx, userID)
+	_ = m.pub.Publish(ctx, fmt.Sprintf("USER_UPDATE_DATA:%d", userID),
+		map[string]any{"type": "USER_UPDATE_DATA", "userId": userID, "balance": bal})
 }
 
 // Register mounts wallet routes.
@@ -231,6 +246,11 @@ func (m *Module) transact(c *fiber.Ctx) error {
 
 	if err := tx.Commit(); err != nil {
 		return httpx.Internal(c, "commit error")
+	}
+	// Both parties' balances moved → push live header/footer updates to each.
+	m.notifyBalance(c.Context(), body.UserID)
+	if parentID != nil {
+		m.notifyBalance(c.Context(), *parentID)
 	}
 	bal, _ := m.accounts.GetBalance(c.Context(), body.UserID)
 	return httpx.OK(c, fiber.Map{"userId": body.UserID, "balance": bal})

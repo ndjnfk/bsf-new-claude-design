@@ -1,47 +1,112 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Box, Card, CardContent, Chip, IconButton, Stack, Table, TableBody, TableCell, TableHead,
-  TableRow, TextField, Typography,
+  Box, Card, CardContent, Chip, IconButton, MenuItem, Stack, Table, TableBody, TableCell,
+  TableHead, TableRow, Tab, Tabs, TextField, Typography,
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
-import { listBets, deleteBet, type Bet } from '../lib/api'
-import { useRoom } from '../hooks/useRoom'
+import {
+  listBets, listDeletedBets, deleteBet, listSports, listSeries, listMatches,
+  type Bet, type DeletedBet,
+} from '../lib/api'
 import { useAuth } from '../store/auth'
 
-// Doc §17 — Bet List Live: current bets, auto-refreshing on socket updates.
+type View = 'open' | 'settled' | 'deleted'
+
+// Bet List Live — pending bets by default, with Sport / Series / Match + date
+// filters and a Deleted Bets view. Settled bets only appear under the Settled tab.
 export function BetListLive() {
   const qc = useQueryClient()
-  const [marketId, setMarketId] = useState('')
   const isSDA = useAuth((s) => s.user?.usetype === 0)
 
-  const { data: bets = [] } = useQuery({
-    queryKey: ['bets', marketId],
-    queryFn: () => listBets(marketId ? { marketId } : undefined).then((r) => r ?? []),
+  const [view, setView] = useState<View>('open')
+  const [sportId, setSportId] = useState<number | ''>('')
+  const [seriesId, setSeriesId] = useState<number | ''>('')
+  const [matchId, setMatchId] = useState<number | ''>('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+
+  // Cascading selectors. Series/Match dropdowns are scoped by the choice above.
+  const { data: sports = [] } = useQuery({ queryKey: ['sports'], queryFn: () => listSports().then((r) => r ?? []) })
+  const { data: series = [] } = useQuery({
+    queryKey: ['series', sportId], enabled: sportId !== '',
+    queryFn: () => listSeries(Number(sportId)).then((r) => r ?? []),
+  })
+  const { data: matches = [] } = useQuery({
+    queryKey: ['matches', sportId, seriesId, 'picker'], enabled: sportId !== '',
+    queryFn: () => listMatches(Number(sportId), seriesId === '' ? undefined : Number(seriesId)).then((r) => r ?? []),
+  })
+
+  // matchIds in scope (used to narrow client-side when a Sport/Series is chosen
+  // but no single Match is — bets carry only matchId, not sport/series).
+  const scopeMatchIds = useMemo(() => new Set(matches.map((m) => m.id)), [matches])
+
+  const dateParams = { from: from || undefined, to: to || undefined }
+  const liveParams = {
+    settled: view as 'open' | 'settled',
+    ...(matchId !== '' ? { matchId: Number(matchId) } : {}),
+    ...dateParams,
+  }
+
+  const { data: liveBets = [] } = useQuery({
+    queryKey: ['bets', view, matchId, from, to],
+    enabled: view !== 'deleted',
+    queryFn: () => listBets(liveParams).then((r) => r ?? []),
     refetchInterval: 5000,
   })
+  const { data: deletedBets = [] } = useQuery({
+    queryKey: ['deleted-bets', matchId, from, to],
+    enabled: view === 'deleted',
+    queryFn: () => listDeletedBets({ ...(matchId !== '' ? { matchId: Number(matchId) } : {}), ...dateParams }).then((r) => r ?? []),
+  })
+
+  const rows: (Bet | DeletedBet)[] = view === 'deleted' ? deletedBets : liveBets
+  // When a Sport/Series is chosen but not a specific Match, narrow client-side.
+  const visible = sportId !== '' && matchId === ''
+    ? rows.filter((b) => scopeMatchIds.has((b as Bet).matchId))
+    : rows
 
   const remove = useMutation({
     mutationFn: (id: string) => deleteBet(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['bets', marketId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['bets'] }),
   })
 
-  // When watching a specific market, join its room for instant updates.
-  useRoom(marketId ? `MARKET_UPDATE_DATA:${marketId}` : null, () =>
-    qc.invalidateQueries({ queryKey: ['bets', marketId] }),
-  )
+  const showAction = isSDA && view !== 'deleted'
+  const cols = (view === 'deleted' ? 10 : 9) + (showAction ? 1 : 0)
 
   return (
     <Box>
-      <Typography variant="h5" gutterBottom>Current Bets</Typography>
+      <Typography variant="h5" gutterBottom>Bet List Live</Typography>
       <Card>
         <CardContent>
-          <Stack direction="row" sx={{ mb: 2 }}>
-            <TextField
-              size="small" label="Filter by Market ID (live)" value={marketId}
-              onChange={(e) => setMarketId(e.target.value)}
-            />
+          <Tabs value={view} onChange={(_, v) => setView(v)} sx={{ mb: 2 }}>
+            <Tab label="Pending" value="open" />
+            <Tab label="Settled" value="settled" />
+            <Tab label="Deleted" value="deleted" />
+          </Tabs>
+
+          <Stack direction="row" flexWrap="wrap" gap={1.5} sx={{ mb: 2 }}>
+            <TextField select size="small" label="Sport" value={sportId} sx={{ minWidth: 140 }}
+              onChange={(e) => { setSportId(e.target.value === '' ? '' : Number(e.target.value)); setSeriesId(''); setMatchId('') }}>
+              <MenuItem value="">All Sports</MenuItem>
+              {sports.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="Series" value={seriesId} sx={{ minWidth: 180 }} disabled={sportId === ''}
+              onChange={(e) => { setSeriesId(e.target.value === '' ? '' : Number(e.target.value)); setMatchId('') }}>
+              <MenuItem value="">All Series</MenuItem>
+              {series.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="Match" value={matchId} sx={{ minWidth: 200 }} disabled={sportId === ''}
+              onChange={(e) => setMatchId(e.target.value === '' ? '' : Number(e.target.value))}>
+              <MenuItem value="">All Matches</MenuItem>
+              {matches.map((m) => <MenuItem key={m.id} value={m.id}>{m.name}</MenuItem>)}
+            </TextField>
+            <TextField type="date" size="small" label="From Date" value={from} InputLabelProps={{ shrink: true }}
+              onChange={(e) => setFrom(e.target.value)} />
+            <TextField type="date" size="small" label="To Date" value={to} InputLabelProps={{ shrink: true }}
+              onChange={(e) => setTo(e.target.value)} />
           </Stack>
+
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -53,13 +118,13 @@ export function BetListLive() {
                 <TableCell align="right">Stake</TableCell>
                 <TableCell align="right">Matched</TableCell>
                 <TableCell align="right">P/L</TableCell>
-                <TableCell>Status</TableCell>
                 <TableCell>Date</TableCell>
-                {isSDA && <TableCell align="right">Action</TableCell>}
+                {view === 'deleted' && <TableCell>Deleted By</TableCell>}
+                {showAction && <TableCell align="right">Action</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
-              {bets.map((b: Bet, i: number) => (
+              {visible.map((b, i) => (
                 <TableRow key={b.id || i} hover sx={{ bgcolor: b.side === 'lay' ? '#fff1f0' : '#f0f7ff' }}>
                   <TableCell>{b.userId}</TableCell>
                   <TableCell>{b.marketId}</TableCell>
@@ -71,19 +136,17 @@ export function BetListLive() {
                   <TableCell align="right" sx={{ color: (b.pl ?? 0) < 0 ? '#cf222e' : '#1a7f37' }}>
                     {b.settled ? (b.pl ?? 0).toFixed(2) : '—'}
                   </TableCell>
-                  <TableCell>
-                    <Chip size="small" label={b.settled ? 'Settled' : 'Open'} color={b.settled ? 'success' : 'default'} />
-                  </TableCell>
                   <TableCell>{new Date(b.createdAt).toLocaleString()}</TableCell>
-                  {isSDA && (
+                  {view === 'deleted' && <TableCell>{(b as DeletedBet).deletedBy ?? '—'}</TableCell>}
+                  {showAction && (
                     <TableCell align="right">
                       <IconButton size="small" color="error" onClick={() => remove.mutate(b.id)}><DeleteIcon fontSize="small" /></IconButton>
                     </TableCell>
                   )}
                 </TableRow>
               ))}
-              {bets.length === 0 && (
-                <TableRow><TableCell colSpan={isSDA ? 11 : 10} align="center">No live bets</TableCell></TableRow>
+              {visible.length === 0 && (
+                <TableRow><TableCell colSpan={cols} align="center">No {view === 'open' ? 'pending' : view} bets</TableCell></TableRow>
               )}
             </TableBody>
           </Table>

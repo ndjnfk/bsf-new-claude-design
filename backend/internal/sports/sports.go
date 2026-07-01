@@ -145,6 +145,11 @@ func (m *Module) listMatches(c *fiber.Ctx) error {
 		q += ` AND series_id = ?`
 		args = append(args, ser)
 	}
+	// Live Matches: only active, not-yet-settled fixtures (settled ones move to
+	// Completed Matches). Management views omit live=1 and see everything.
+	if c.Query("live") == "1" {
+		q += ` AND active = 1 AND status <> 'SETTLED'`
+	}
 	q += ` ORDER BY start_time ASC LIMIT 200`
 	var rows []Match
 	if err := m.db.SelectContext(c.Context(), &rows, q, args...); err != nil {

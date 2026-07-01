@@ -157,8 +157,11 @@ func (e *Engine) settleBet(ctx context.Context, b betDoc, playerPL float64) erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Bettor keeps the bet P&L.
-	if err := adjust(ctx, tx, b.UserID, playerPL, "Bet settled "+b.MarketID); err != nil {
+	// The bettor's liability was debited from balance at placement (deduct-on-
+	// placement), so settlement credits back the RETURN = liability + P&L: a win
+	// returns stake plus winnings, a loss returns nothing (liability − stake = 0).
+	// Net effect on balance over the bet's life is exactly the P&L.
+	if err := adjust(ctx, tx, b.UserID, b.Exposure+playerPL, "Bet settled "+b.MarketID); err != nil {
 		return err
 	}
 	// Distribute the book (−playerPL) up the chain.

@@ -17,8 +17,6 @@ import LanguageIcon from '@mui/icons-material/Language'
 import KeyIcon from '@mui/icons-material/Key'
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents'
 import DoneAllIcon from '@mui/icons-material/DoneAll'
-import ArticleIcon from '@mui/icons-material/Article'
-import QuestionAnswerIcon from '@mui/icons-material/QuestionAnswer'
 import TuneIcon from '@mui/icons-material/Tune'
 import GroupRemoveIcon from '@mui/icons-material/GroupRemove'
 import HandshakeIcon from '@mui/icons-material/Handshake'
@@ -30,11 +28,7 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import CasinoIcon from '@mui/icons-material/Casino'
-import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
-import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
-import RemoveCircleIcon from '@mui/icons-material/RemoveCircle'
 import PaidIcon from '@mui/icons-material/Paid'
-import HistoryIcon from '@mui/icons-material/History'
 import SummarizeIcon from '@mui/icons-material/Summarize'
 import DescriptionIcon from '@mui/icons-material/Description'
 import SavingsIcon from '@mui/icons-material/Savings'
@@ -54,27 +48,28 @@ const DRAWER_WIDTH = 240
 type NavItem = { label: string; icon: ReactNode; to: string; sda?: boolean; perm?: string; player?: boolean }
 const NAV: NavItem[] = [
   { label: 'Dashboard', icon: <DashboardIcon />, to: '/super-duper-admin/home-dashboard', player: true },
-  { label: 'Manage Clients', icon: <BusinessIcon />, to: '/super-duper-admin/users' },
-  { label: 'Commission & Limits', icon: <PercentIcon />, to: '/super-duper-admin/commission-limit' },
-  { label: 'Manage Series', icon: <AccountTreeIcon />, to: '/super-duper-admin/manage-series', sda: true, perm: 'Active Matches and Manage Series' },
-  { label: 'Activate Matches', icon: <PlaylistAddCheckIcon />, to: '/super-duper-admin/direct-activate', sda: true, perm: 'Active Matches and Manage Series' },
   { label: 'Live Matches', icon: <SportsCricketIcon />, to: '/super-duper-admin/live-matches' },
   { label: 'Completed Matches', icon: <DoneAllIcon />, to: '/super-duper-admin/completed-matches' },
-  { label: 'Block Market', icon: <BlockIcon />, to: '/super-duper-admin/block-market', sda: true, perm: 'Match On and Off' },
+  
+   { label: 'Block Sport', icon: <BlockIcon />, to: '/super-duper-admin/block-market', sda: true, perm: 'Match On and Off' },
+  { label: 'Manage Series', icon: <AccountTreeIcon />, to: '/super-duper-admin/manage-series', sda: true, perm: 'Active Matches and Manage Series' },
+  { label: 'Activate Matches', icon: <PlaylistAddCheckIcon />, to: '/super-duper-admin/direct-activate', sda: true, perm: 'Active Matches and Manage Series' },
+  { label: 'Series Activate', icon: <PlaylistAddCheckIcon />, to: '/super-duper-admin/series-activate', sda: true, perm: 'Active Matches and Manage Series' },
+  { label: 'Activate Match', icon: <PlaylistAddCheckIcon />, to: '/super-duper-admin/activate-match', sda: true, perm: 'Active Matches and Manage Series' },
+  { label: 'Manage Clients', icon: <BusinessIcon />, to: '/super-duper-admin/users' },
+  { label: 'Commission & Limits', icon: <PercentIcon />, to: '/super-duper-admin/commission-limit' },
+ 
   { label: 'Bet List Live', icon: <ReceiptLongIcon />, to: '/super-duper-admin/bet-list' },
   { label: 'Results', icon: <EmojiEventsIcon />, to: '/super-duper-admin/match-result', sda: true, perm: 'Match Result Declare' },
-  { label: 'Old Match Results', icon: <HistoryIcon />, to: '/super-duper-admin/settled-matches' },
+  
   { label: 'Set Fancy BetLimit', icon: <CasinoIcon />, to: '/super-duper-admin/manage-fancy', sda: true, perm: 'Fancy Activation' },
   { label: 'Aura GGR', icon: <PaidIcon />, to: '/super-duper-admin/royal-casino', sda: true },
-  { label: 'Agent Bank DP', icon: <AccountBalanceIcon />, to: '/super-duper-admin/bank-account/deposit' },
-  { label: 'Agent Bank WD', icon: <AccountBalanceWalletIcon />, to: '/super-duper-admin/bank-account/withdraw' },
-  { label: 'Deduct Dealer', icon: <RemoveCircleIcon />, to: '/super-duper-admin/deduct-dealer' },
+ 
   { label: 'All Reports', icon: <AssessmentIcon />, to: '/super-duper-admin/reports', player: true },
   { label: 'Collection Report', icon: <SummarizeIcon />, to: '/super-duper-admin/collection-report-all' },
   { label: 'Chips Summary', icon: <SavingsIcon />, to: '/super-duper-admin/chip-summary' },
   { label: 'Log Detail', icon: <DescriptionIcon />, to: '/super-duper-admin/log-detail' },
-  { label: 'News', icon: <ArticleIcon />, to: '/super-duper-admin/news', sda: true },
-  { label: 'Queries', icon: <QuestionAnswerIcon />, to: '/super-duper-admin/queries', sda: true },
+ 
   { label: 'Blocked Clients', icon: <GroupRemoveIcon />, to: '/super-duper-admin/blocked-user' },
   { label: 'Settlements', icon: <HandshakeIcon />, to: '/super-duper-admin/settlement-entry' },
   { label: 'Search Logs User', icon: <ManageSearchIcon />, to: '/super-duper-admin/search-logs-user' },

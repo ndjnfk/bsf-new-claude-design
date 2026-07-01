@@ -15,8 +15,8 @@ export function LiveMatches() {
 
   const { data: sports = [] } = useQuery({ queryKey: ['sports'], queryFn: () => listSports().then((r) => r ?? []) })
   const { data: matches = [], isLoading } = useQuery({
-    queryKey: ['matches', sportId],
-    queryFn: () => listMatches(sportId).then((r) => r ?? []),
+    queryKey: ['matches', sportId, 'live'],
+    queryFn: () => listMatches(sportId, undefined, true).then((r) => r ?? []), // active + not settled
   })
 
   // Live: refresh the list when the admin dashboard room emits an update.

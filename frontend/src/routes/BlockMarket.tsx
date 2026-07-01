@@ -32,9 +32,9 @@ export function BlockMarket() {
 
   return (
     <Box>
-      <Typography variant="h5" gutterBottom>Sports Block</Typography>
+      <Typography variant="h5" gutterBottom>Block Sport</Typography>
       <Alert severity="info" sx={{ mb: 2 }}>
-        Turning a sport <b>off</b> hides it — and all its series, matches and markets — from your whole downline.
+        Turning a sport <b>off</b> deactivates it — and all its series, matches and markets — removing them from Live Matches, and hides it from your whole downline.
       </Alert>
       <Card>
         <CardContent>

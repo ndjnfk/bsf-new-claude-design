@@ -94,7 +94,8 @@ func (m *Module) setBlock(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil || body.ItemType == "" || body.ItemID == "" {
 		return httpx.BadRequest(c, "itemType and itemId are required")
 	}
-	uid := middleware.User(c).UserID
+	user := middleware.User(c)
+	uid := user.UserID
 	if body.Blocked {
 		if _, err := m.db.ExecContext(c.Context(),
 			`INSERT INTO catalog_blocks (user_id, item_type, item_id) VALUES (?,?,?)
@@ -108,6 +109,12 @@ func (m *Module) setBlock(c *fiber.Ctx) error {
 			return httpx.Internal(c, "failed to unblock")
 		}
 	}
+	// Super Duper Admin's block also flips the GLOBAL active flag, cascading down
+	// (sport → its series → matches → markets), so blocked items leave Live Matches
+	// for everyone. Lower tiers only scope visibility to their downline (above).
+	if user.Usetype == 0 {
+		m.cascadeActive(c.Context(), body.ItemType, body.ItemID, !body.Blocked)
+	}
 	// Real-time, scoped to THIS blocker's subtree: publish to the blocker's own
 	// room. Every client subscribes to a room for each of its ancestors, so only
 	// the blocker's downline (who have this user as an ancestor) is notified. An
@@ -117,4 +124,32 @@ func (m *Module) setBlock(c *fiber.Ctx) error {
 		"itemType": body.ItemType, "itemId": body.ItemID, "blocked": body.Blocked,
 	})
 	return httpx.OK(c, fiber.Map{"itemType": body.ItemType, "itemId": body.ItemID, "blocked": body.Blocked})
+}
+
+// cascadeActive flips the active flag of an item AND everything beneath it, so a
+// sport block deactivates its series, matches and markets (and an unblock
+// reactivates them). itemID is the local id (sport_id / series_id / match_id) or
+// market_id.
+func (m *Module) cascadeActive(ctx context.Context, itemType, itemID string, active bool) {
+	on := 0
+	if active {
+		on = 1
+	}
+	exec := func(q string, args ...any) { _, _ = m.db.ExecContext(ctx, q, args...) }
+	switch itemType {
+	case Sport:
+		exec(`UPDATE sports  SET active = ? WHERE id = ?`, on, itemID)
+		exec(`UPDATE markets SET active = ? WHERE match_id IN (SELECT id FROM matches WHERE sport_id = ?)`, on, itemID)
+		exec(`UPDATE matches SET active = ? WHERE sport_id = ?`, on, itemID)
+		exec(`UPDATE series  SET active = ? WHERE sport_id = ?`, on, itemID)
+	case Series:
+		exec(`UPDATE markets SET active = ? WHERE match_id IN (SELECT id FROM matches WHERE series_id = ?)`, on, itemID)
+		exec(`UPDATE matches SET active = ? WHERE series_id = ?`, on, itemID)
+		exec(`UPDATE series  SET active = ? WHERE id = ?`, on, itemID)
+	case Match:
+		exec(`UPDATE markets SET active = ? WHERE match_id = ?`, on, itemID)
+		exec(`UPDATE matches SET active = ? WHERE id = ?`, on, itemID)
+	case Market:
+		exec(`UPDATE markets SET active = ? WHERE market_id = ?`, on, itemID)
+	}
 }

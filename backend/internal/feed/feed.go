@@ -33,6 +33,9 @@ type Series struct {
 	ID      string `json:"id"`
 	SportID string `json:"sportId"`
 	Name    string `json:"name"`
+	// Set by the wrapper after cross-referencing our DB.
+	Activated bool  `json:"activated"`
+	LocalID   int64 `json:"localId"` // our series.id once activated
 }
 type Match struct {
 	ID        string   `json:"id"`
@@ -243,7 +246,266 @@ func (m *Module) Register(api fiber.Router, requireSDA fiber.Handler) {
 	g := api.Group("/feed", requireSDA)
 	g.Get("/events", m.events)
 	g.Get("/sports", m.sports)
-	g.Post("/activate", m.activate) // import a feed event into our catalog
+	g.Get("/series", m.series)      // Series Activate page (feed-only, legacy)
+	g.Post("/activate", m.activate) // Direct Activate — match + markets (untouched)
+
+	// Streamlined Series/Match Activate: a merged view of the feed AND our own
+	// catalog (so manual items show too), with an activate/deactivate toggle.
+	g.Get("/series-list", m.seriesList)
+	g.Get("/match-list", m.matchList)
+	g.Post("/toggle-series", m.toggleSeries)
+	g.Post("/toggle-match", m.toggleMatch)
+}
+
+// CatalogRow is one row of the merged (feed + our catalog) activate views.
+type CatalogRow struct {
+	FeedID     string `json:"feedId"`  // feed id ("" = manual/local-only)
+	LocalID    int64  `json:"localId"` // our row id (0 = not in our catalog)
+	Name       string `json:"name"`
+	Active     bool   `json:"active"`
+	SeriesName string `json:"seriesName,omitempty"`
+	StartTime  string `json:"startTime,omitempty"`
+	InPlay     bool   `json:"inPlay,omitempty"`
+}
+
+func (m *Module) seriesList(c *fiber.Ctx) error {
+	sportID := c.Query("sportId")
+	sid, _ := strconv.ParseInt(sportID, 10, 64)
+
+	// Feed series for this sport (best-effort: feed may be down).
+	var feed []Series
+	if snap, err := m.provider.Events(c.Context()); err == nil {
+		for _, s := range snap.Series {
+			if s.SportID == sportID {
+				feed = append(feed, s)
+			}
+		}
+	}
+	// Our catalog series for this sport (manual + already-activated).
+	var dbRows []struct {
+		ID     int64   `db:"id"`
+		Name   string  `db:"name"`
+		FeedID *string `db:"feed_id"`
+		Active bool    `db:"active"`
+	}
+	_ = m.db.SelectContext(c.Context(), &dbRows, `SELECT id, name, feed_id, active FROM series WHERE sport_id = ?`, sid)
+
+	byFeed := map[string]int{} // feed_id → index into dbRows
+	for i, d := range dbRows {
+		if d.FeedID != nil && *d.FeedID != "" {
+			byFeed[*d.FeedID] = i
+		}
+	}
+	rows := make([]CatalogRow, 0, len(feed)+len(dbRows))
+	usedDB := map[int64]bool{}
+	for _, f := range feed {
+		row := CatalogRow{FeedID: f.ID, Name: f.Name}
+		if idx, ok := byFeed[f.ID]; ok {
+			d := dbRows[idx]
+			row.LocalID, row.Active = d.ID, d.Active
+			usedDB[d.ID] = true
+		}
+		rows = append(rows, row)
+	}
+	for _, d := range dbRows { // manual / activated-but-not-in-current-feed
+		if usedDB[d.ID] {
+			continue
+		}
+		fid := ""
+		if d.FeedID != nil {
+			fid = *d.FeedID
+		}
+		rows = append(rows, CatalogRow{FeedID: fid, LocalID: d.ID, Name: d.Name, Active: d.Active})
+	}
+	return httpx.OK(c, rows)
+}
+
+func (m *Module) matchList(c *fiber.Ctx) error {
+	sportID := c.Query("sportId")
+	sid, _ := strconv.ParseInt(sportID, 10, 64)
+
+	feedSeriesName := map[string]string{}
+	var feed []Match
+	if snap, err := m.provider.Events(c.Context()); err == nil {
+		for _, s := range snap.Series {
+			feedSeriesName[s.ID] = s.Name
+		}
+		for _, mt := range snap.Matches {
+			if mt.SportID == sportID {
+				feed = append(feed, mt)
+			}
+		}
+	}
+	var dbRows []struct {
+		ID        int64      `db:"id"`
+		Name      string     `db:"name"`
+		FeedID    *string    `db:"feed_id"`
+		Active    bool       `db:"active"`
+		SeriesNm  *string    `db:"series_name"`
+		StartTime *time.Time `db:"start_time"`
+	}
+	_ = m.db.SelectContext(c.Context(), &dbRows, `
+		SELECT mt.id, mt.name, mt.feed_id, mt.active, s.name AS series_name, mt.start_time
+		  FROM matches mt LEFT JOIN series s ON s.id = mt.series_id
+		 WHERE mt.sport_id = ?`, sid)
+
+	byFeed := map[string]int{}
+	for i, d := range dbRows {
+		if d.FeedID != nil && *d.FeedID != "" {
+			byFeed[*d.FeedID] = i
+		}
+	}
+	rows := make([]CatalogRow, 0, len(feed)+len(dbRows))
+	usedDB := map[int64]bool{}
+	for _, f := range feed {
+		row := CatalogRow{FeedID: f.ID, Name: f.Name, SeriesName: feedSeriesName[f.SeriesID], StartTime: f.StartTime, InPlay: f.InPlay}
+		if idx, ok := byFeed[f.ID]; ok {
+			d := dbRows[idx]
+			row.LocalID, row.Active = d.ID, d.Active
+			usedDB[d.ID] = true
+		}
+		rows = append(rows, row)
+	}
+	for _, d := range dbRows {
+		if usedDB[d.ID] {
+			continue
+		}
+		fid := ""
+		if d.FeedID != nil {
+			fid = *d.FeedID
+		}
+		row := CatalogRow{FeedID: fid, LocalID: d.ID, Name: d.Name, Active: d.Active}
+		if d.SeriesNm != nil {
+			row.SeriesName = *d.SeriesNm
+		}
+		if d.StartTime != nil {
+			row.StartTime = d.StartTime.Format(time.RFC3339)
+		}
+		rows = append(rows, row)
+	}
+	return httpx.OK(c, rows)
+}
+
+// toggleSeries activates (import or re-enable) / deactivates a series.
+func (m *Module) toggleSeries(c *fiber.Ctx) error {
+	var body struct {
+		FeedID  string `json:"feedId"`
+		LocalID int64  `json:"localId"`
+		On      bool   `json:"on"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return httpx.BadRequest(c, "invalid body")
+	}
+	if !body.On {
+		if body.LocalID == 0 {
+			return httpx.BadRequest(c, "localId required")
+		}
+		// Cascade: deactivating a series deactivates its matches and their markets.
+		tx, err := m.db.BeginTxx(c.Context(), nil)
+		if err != nil {
+			return httpx.Internal(c, "tx error")
+		}
+		defer tx.Rollback() //nolint:errcheck
+		_, _ = tx.ExecContext(c.Context(), `UPDATE series SET active = 0 WHERE id = ?`, body.LocalID)
+		_, _ = tx.ExecContext(c.Context(),
+			`UPDATE markets SET active = 0 WHERE match_id IN (SELECT id FROM matches WHERE series_id = ?)`, body.LocalID)
+		_, _ = tx.ExecContext(c.Context(), `UPDATE matches SET active = 0 WHERE series_id = ?`, body.LocalID)
+		if err := tx.Commit(); err != nil {
+			return httpx.Internal(c, "commit error")
+		}
+		return httpx.OK(c, fiber.Map{"active": false})
+	}
+	if body.LocalID != 0 { // re-enable existing
+		_, _ = m.db.ExecContext(c.Context(), `UPDATE series SET active = 1 WHERE id = ?`, body.LocalID)
+		return httpx.OK(c, fiber.Map{"active": true})
+	}
+	if body.FeedID == "" {
+		return httpx.BadRequest(c, "feedId required to import")
+	}
+	snap, err := m.provider.Events(c.Context())
+	if err != nil {
+		return httpx.Err(c, fiber.StatusBadGateway, "feed unavailable")
+	}
+	for i := range snap.Series {
+		if snap.Series[i].ID == body.FeedID {
+			id, e := m.importSeries(c.Context(), snap.Series[i].SportID, snap.Series[i].ID, snap.Series[i].Name)
+			if e != nil {
+				return httpx.Internal(c, "failed to activate series")
+			}
+			return httpx.Created(c, fiber.Map{"seriesId": id, "active": true})
+		}
+	}
+	return httpx.NotFound(c, "series not found in feed")
+}
+
+// toggleMatch activates (import match-only or re-enable) / deactivates a match.
+func (m *Module) toggleMatch(c *fiber.Ctx) error {
+	var body struct {
+		FeedID  string `json:"feedId"`
+		LocalID int64  `json:"localId"`
+		On      bool   `json:"on"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return httpx.BadRequest(c, "invalid body")
+	}
+	if !body.On {
+		if body.LocalID == 0 {
+			return httpx.BadRequest(c, "localId required")
+		}
+		// Cascade: deactivating a match deactivates its markets too.
+		tx, err := m.db.BeginTxx(c.Context(), nil)
+		if err != nil {
+			return httpx.Internal(c, "tx error")
+		}
+		defer tx.Rollback() //nolint:errcheck
+		_, _ = tx.ExecContext(c.Context(), `UPDATE markets SET active = 0 WHERE match_id = ?`, body.LocalID)
+		_, _ = tx.ExecContext(c.Context(), `UPDATE matches SET active = 0 WHERE id = ?`, body.LocalID)
+		if err := tx.Commit(); err != nil {
+			return httpx.Internal(c, "commit error")
+		}
+		return httpx.OK(c, fiber.Map{"active": false})
+	}
+	if body.LocalID != 0 {
+		_, _ = m.db.ExecContext(c.Context(), `UPDATE matches SET active = 1 WHERE id = ?`, body.LocalID)
+		return httpx.OK(c, fiber.Map{"active": true})
+	}
+	if body.FeedID == "" {
+		return httpx.BadRequest(c, "feedId required to import")
+	}
+	snap, err := m.provider.Events(c.Context())
+	if err != nil {
+		return httpx.Err(c, fiber.StatusBadGateway, "feed unavailable")
+	}
+	for i := range snap.Matches {
+		if snap.Matches[i].ID == body.FeedID {
+			id, e := m.importMatch(c.Context(), snap, &snap.Matches[i], false) // match only
+			if e != nil {
+				return httpx.Internal(c, "failed to activate match")
+			}
+			return httpx.Created(c, fiber.Map{"matchId": id, "active": true})
+		}
+	}
+	return httpx.NotFound(c, "event not found in feed")
+}
+
+// series returns the feed's series for a sport, each flagged activated if it is
+// already in our catalog (by feed_id). Powers the Series Activate page.
+func (m *Module) series(c *fiber.Ctx) error {
+	snap, err := m.provider.Events(c.Context())
+	if err != nil {
+		return httpx.Err(c, fiber.StatusBadGateway, "all feeds unavailable")
+	}
+	out := snap.Series
+	if sid := c.Query("sportId"); sid != "" {
+		out = out[:0]
+		for _, s := range snap.Series {
+			if s.SportID == sid {
+				out = append(out, s)
+			}
+		}
+	}
+	m.annotateSeries(c.Context(), out)
+	return httpx.OK(c, out)
 }
 
 func (m *Module) events(c *fiber.Ctx) error {
@@ -308,6 +570,40 @@ func (m *Module) annotate(ctx context.Context, snap *Snapshot) {
 	}
 }
 
+// annotateSeries flags each feed series already in our catalog (by feed_id).
+func (m *Module) annotateSeries(ctx context.Context, list []Series) {
+	if len(list) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(list))
+	for _, s := range list {
+		ids = append(ids, s.ID)
+	}
+	q, args, err := sqlx.In(`SELECT feed_id, id FROM series WHERE feed_id IN (?)`, ids)
+	if err != nil {
+		return
+	}
+	rows, err := m.db.QueryContext(ctx, m.db.Rebind(q), args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	local := map[string]int64{}
+	for rows.Next() {
+		var fid string
+		var id int64
+		if rows.Scan(&fid, &id) == nil {
+			local[fid] = id
+		}
+	}
+	for i := range list {
+		if id, ok := local[list[i].ID]; ok {
+			list[i].Activated = true
+			list[i].LocalID = id
+		}
+	}
+}
+
 // activate imports a feed event (its sport, series, match, markets and runners)
 // into our catalog. Idempotent: a re-activate returns the existing match id.
 func (m *Module) activate(c *fiber.Ctx) error {
@@ -331,14 +627,96 @@ func (m *Module) activate(c *fiber.Ctx) error {
 	if match == nil {
 		return httpx.NotFound(c, "event not found in feed")
 	}
-	id, err := m.importMatch(c.Context(), snap, match)
+	id, err := m.importMatch(c.Context(), snap, match, true)
 	if err != nil {
 		return httpx.Internal(c, "failed to activate: "+err.Error())
 	}
 	return httpx.Created(c, fiber.Map{"matchId": id, "activated": true})
 }
 
-func (m *Module) importMatch(ctx context.Context, snap *Snapshot, mt *Match) (int64, error) {
+// activateSeries imports a feed series (and its sport) into our catalog — series
+// only, no matches. Idempotent.
+func (m *Module) activateSeries(c *fiber.Ctx) error {
+	var body struct {
+		SeriesID string `json:"seriesId"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.SeriesID == "" {
+		return httpx.BadRequest(c, "seriesId is required")
+	}
+	snap, err := m.provider.Events(c.Context())
+	if err != nil {
+		return httpx.Err(c, fiber.StatusBadGateway, "feed unavailable")
+	}
+	var s *Series
+	for i := range snap.Series {
+		if snap.Series[i].ID == body.SeriesID {
+			s = &snap.Series[i]
+			break
+		}
+	}
+	if s == nil {
+		return httpx.NotFound(c, "series not found in feed")
+	}
+	id, err := m.importSeries(c.Context(), s.SportID, s.ID, s.Name)
+	if err != nil {
+		return httpx.Internal(c, "failed to activate series: "+err.Error())
+	}
+	return httpx.Created(c, fiber.Map{"seriesId": id, "activated": true})
+}
+
+// activateMatch imports a feed event as a MATCH ONLY (no markets) — Match Odds /
+// other markets are fetched on demand later. Idempotent.
+func (m *Module) activateMatch(c *fiber.Ctx) error {
+	var body struct {
+		EID string `json:"eid"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.EID == "" {
+		return httpx.BadRequest(c, "eid is required")
+	}
+	snap, err := m.provider.Events(c.Context())
+	if err != nil {
+		return httpx.Err(c, fiber.StatusBadGateway, "feed unavailable")
+	}
+	var match *Match
+	for i := range snap.Matches {
+		if snap.Matches[i].ID == body.EID {
+			match = &snap.Matches[i]
+			break
+		}
+	}
+	if match == nil {
+		return httpx.NotFound(c, "event not found in feed")
+	}
+	id, err := m.importMatch(c.Context(), snap, match, false) // no markets
+	if err != nil {
+		return httpx.Internal(c, "failed to activate match: "+err.Error())
+	}
+	return httpx.Created(c, fiber.Map{"matchId": id, "activated": true})
+}
+
+// importSeries upserts a feed series (and its sport). Returns the series id.
+func (m *Module) importSeries(ctx context.Context, sportIDStr, seriesID, name string) (int64, error) {
+	var existing int64
+	_ = m.db.GetContext(ctx, &existing, `SELECT id FROM series WHERE feed_id = ? LIMIT 1`, seriesID)
+	if existing != 0 {
+		return existing, nil
+	}
+	sportID, _ := strconv.ParseInt(sportIDStr, 10, 64)
+	if sportID != 0 {
+		_, _ = m.db.ExecContext(ctx,
+			`INSERT INTO sports (id, name, active, is_betfair) VALUES (?,?,1,1) ON DUPLICATE KEY UPDATE name = name`,
+			sportID, sportName(sportIDStr))
+	}
+	res, err := m.db.ExecContext(ctx,
+		`INSERT INTO series (sport_id, name, is_manual, active, feed_id) VALUES (?,?,0,1,?)`,
+		sportID, name, seriesID)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (m *Module) importMatch(ctx context.Context, snap *Snapshot, mt *Match, withMarkets bool) (int64, error) {
 	var existing int64
 	_ = m.db.GetContext(ctx, &existing, `SELECT id FROM matches WHERE feed_id = ? LIMIT 1`, mt.ID)
 	if existing != 0 {
@@ -388,19 +766,21 @@ func (m *Module) importMatch(ctx context.Context, snap *Snapshot, mt *Match) (in
 	}
 	matchID, _ := res.LastInsertId()
 
-	for _, mk := range mt.Markets {
-		mres, e := tx.ExecContext(ctx,
-			`INSERT INTO markets (match_id, market_id, name, category, is_manual, active, feed_id) VALUES (?,?,?,?,0,1,?)`,
-			matchID, mk.ID, mk.Name, marketCategory(mk.Type), mk.ID)
-		if e != nil {
-			return 0, e
-		}
-		mrid, _ := mres.LastInsertId()
-		for i, r := range mk.Runners {
-			if _, e := tx.ExecContext(ctx,
-				`INSERT INTO runners (market_row_id, selection_id, name, sort_order) VALUES (?,?,?,?)`,
-				mrid, r.ID, r.Name, i+1); e != nil {
+	if withMarkets {
+		for _, mk := range mt.Markets {
+			mres, e := tx.ExecContext(ctx,
+				`INSERT INTO markets (match_id, market_id, name, category, is_manual, active, feed_id) VALUES (?,?,?,?,0,1,?)`,
+				matchID, mk.ID, mk.Name, marketCategory(mk.Type), mk.ID)
+			if e != nil {
 				return 0, e
+			}
+			mrid, _ := mres.LastInsertId()
+			for i, r := range mk.Runners {
+				if _, e := tx.ExecContext(ctx,
+					`INSERT INTO runners (market_row_id, selection_id, name, sort_order) VALUES (?,?,?,?)`,
+					mrid, r.ID, r.Name, i+1); e != nil {
+					return 0, e
+				}
 			}
 		}
 	}

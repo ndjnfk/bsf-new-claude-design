@@ -49,6 +49,8 @@ import { ClientLedger } from './routes/ClientLedger'
 import { ReceivePayCash } from './routes/ReceivePayCash'
 import { CoinHistory } from './routes/CoinHistory'
 import { CreateClient } from './routes/CreateClient'
+import { SeriesActivate } from './routes/SeriesActivate'
+import { ActivateMatch } from './routes/ActivateMatch'
 
 // Routing. Authenticated pages live under the app shell; more of the 32
 // documented pages mount here as each phase lands.
@@ -64,6 +66,8 @@ export function App() {
         <Route path="/super-duper-admin/commission-limit" element={<CommissionLimits />} />
         <Route path="/super-duper-admin/manage-series" element={<ManageSeries />} />
         <Route path="/super-duper-admin/direct-activate" element={<ActivateMatches />} />
+        <Route path="/super-duper-admin/series-activate" element={<SeriesActivate />} />
+        <Route path="/super-duper-admin/activate-match" element={<ActivateMatch />} />
         <Route path="/super-duper-admin/live-matches" element={<LiveMatches />} />
         <Route path="/super-duper-admin/live-game-details" element={<LiveGameDetails />} />
         <Route path="/super-duper-admin/my-markets" element={<MyMarkets />} />

@@ -6,9 +6,10 @@
 // to users.exposure in a single batched statement every couple of seconds — so a
 // bet never blocks on N synchronous MySQL writes.
 //
-// On each bet the bettor takes the full liability; each ancestor takes its
-// partnership share of the book (telescoped, exactly like the settlement model).
-// On settlement the same amount is released.
+// The bettor's OWN liability is held directly against their balance (debited at
+// placement by the betting module), so it is NOT tracked here — this tracker
+// carries only the ANCESTORS' unrealised partnership risk (their telescoped share
+// of the book). On settlement the same amount is released.
 package exposure
 
 import (
@@ -55,9 +56,10 @@ func (t *Tracker) Apply(ctx context.Context, bettorID int64, liability, sign flo
 	if err != nil || len(chain) == 0 {
 		return
 	}
-	// Per-user deltas: bettor full, each ancestor its telescoped share.
+	// Per-user deltas: only ancestors carry exposure here — each its telescoped
+	// share of the book. The bettor's own liability is held against their balance
+	// (debited at placement), so it is deliberately excluded.
 	deltas := make(map[int64]float64, len(chain))
-	deltas[chain[0].id] += sign * liability
 	for i := 1; i < len(chain); i++ {
 		deltas[chain[i].id] += sign * (chain[i].share - chain[i-1].share) / 100 * liability
 	}

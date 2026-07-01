@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>BSF2020 — User Panel</title>
+
+    <!-- Typography + icon fonts (ported from the Angular index.html). Headings use
+         Montserrat; Font Awesome 5 is the icon set used across the panel. -->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" />
+
+    <!-- Brand stylesheet (self-contained, base64 assets) carried over verbatim. -->
+    <link rel="stylesheet" href="/assets/css/pro-styles2.min.css" />
+
+    <!-- Preload the welcome screen backgrounds, as the Angular app did. -->
+    <link rel="preload" as="image" href="/assets/image/welcome-bg.webp" />
+    <link rel="preload" as="image" href="/assets/image/welcome-background.webp" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

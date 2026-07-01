@@ -33,6 +33,7 @@ import (
 	"bsf2020/internal/odds"
 	"bsf2020/internal/settlement"
 	"bsf2020/internal/sports"
+	userpanel "bsf2020/internal/user-panel"
 	"bsf2020/internal/wallet"
 	"bsf2020/pkg/domain"
 	"bsf2020/pkg/middleware"
@@ -114,10 +115,15 @@ func Build(d Deps) *App {
 	// releases it. Maintained in MySQL (users.exposure) + Redis (live counters).
 	expoTracker := exposure.New(d.MySQL, d.Redis, hub)
 
+	// User Panel (bettor / Player) API under /api/user/*, separate from the admin API.
+	// Registered BEFORE identity so its PUBLIC /user/login isn't caught by the global
+	// requireAuth the identity module mounts on /api (its `api.Group("", requireAuth)`).
+	// /user/me keeps its own explicit requireAuth.
+	userpanel.New(identitySvc, d.MySQL, d.Mongo).Register(api, requireAuth)
 	identity.NewHTTP(identitySvc).Register(api, requireAuth)
-	wallet.New(d.MySQL, identityStore).Register(api, requireAuth)
+	wallet.New(d.MySQL, identityStore, hub).Register(api, requireAuth)
 	requests.New(d.MySQL, identityStore).Register(api, requireAuth)
-	betting.New(d.Mongo, matchEngine, hub, d.Redis, expoTracker).Register(api, requireAuth)
+	betting.New(d.Mongo, d.MySQL, matchEngine, hub, d.Redis, expoTracker).Register(api, requireAuth)
 	reporting.New(d.MySQL, d.Mongo).Register(api, requireAuth)
 	restrictions.New(d.MySQL).Register(api, requireAuth)
 	helpersMod.Register(api, requireAuth)

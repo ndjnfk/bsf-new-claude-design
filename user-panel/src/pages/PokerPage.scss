@@ -1,0 +1,54 @@
+/* Poker page — full-screen game launcher (Header only, no Sidebar/Footer). */
+.poker-page {
+  .poker-iframe {
+    display: block;
+    width: 100%;
+    height: 85vh; /* desktop */
+    border: 0;
+  }
+
+  /* Limit-over card — centered message when the casino limit is exhausted. */
+  .poker-limit-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 70vh;
+    padding: 20px;
+  }
+
+  .poker-limit-card {
+    background: #fff;
+    box-shadow: 0 0 15px 5px #e4e4e4;
+    border-radius: 8px;
+    padding: 40px 55px;
+    text-align: center;
+    max-width: 90%;
+  }
+
+  .poker-limit-title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    color: #d9534f;
+  }
+
+  .poker-limit-sub {
+    margin: 4px 0 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #d9534f;
+  }
+
+  .poker-limit-contact {
+    margin: 14px 0 0;
+    font-size: 15px;
+    color: #555;
+  }
+}
+
+/* Up to 575.9px (mobile screens) the iframe is shorter. */
+@media (max-width: 575.9px) {
+  .poker-page .poker-iframe {
+    height: 70vh;
+  }
+}

@@ -4,9 +4,13 @@
 package betting
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jmoiron/sqlx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,6 +26,10 @@ import (
 	"bsf2020/pkg/httpx"
 	"bsf2020/pkg/middleware"
 )
+
+// errInsufficient is returned when a bettor lacks the chips to cover a bet's
+// liability at placement.
+var errInsufficient = errors.New("insufficient balance")
 
 // BetType categorises a bet for the per-match bet slips and reports.
 const (
@@ -55,12 +63,13 @@ type Module struct {
 	deletedBets *mongo.Collection
 	eng         engine.MatchingEngine
 	pub         events.Publisher
-	rdb         *redis.Client      // read live market status for the suspend gate
-	exposure    *exposure.Tracker  // incremental per-level liability
+	rdb         *redis.Client     // read live market status for the suspend gate
+	exposure    *exposure.Tracker // incremental per-level liability
+	sql         *sqlx.DB          // bettor balance + ledger (deduct-on-placement)
 }
 
 // New builds the betting module.
-func New(db *mongo.Database, eng engine.MatchingEngine, pub events.Publisher, rdb *redis.Client, exp *exposure.Tracker) *Module {
+func New(db *mongo.Database, sql *sqlx.DB, eng engine.MatchingEngine, pub events.Publisher, rdb *redis.Client, exp *exposure.Tracker) *Module {
 	return &Module{
 		bets:        db.Collection("bets"),
 		deletedBets: db.Collection("deleted_bets"),
@@ -68,7 +77,57 @@ func New(db *mongo.Database, eng engine.MatchingEngine, pub events.Publisher, rd
 		pub:         pub,
 		rdb:         rdb,
 		exposure:    exp,
+		sql:         sql,
 	}
+}
+
+// ledgerMove changes a user's balance by delta (negative = debit) and appends a
+// matching account_statement row carrying the post-move balance_after, so balance
+// is reconstructable from the ledger at any time. A debit that would overdraw the
+// account returns errInsufficient and changes nothing. account_type 3 = betting.
+func (m *Module) ledgerMove(ctx context.Context, userID int64, delta float64, narration string) (float64, error) {
+	tx, err := m.sql.BeginTxx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if delta < 0 {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE users SET balance = balance + ? WHERE id = ? AND balance >= ?`, delta, userID, -delta)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return 0, errInsufficient
+		}
+	} else if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET balance = balance + ? WHERE id = ?`, delta, userID); err != nil {
+		return 0, err
+	}
+
+	var bal float64
+	_ = tx.GetContext(ctx, &bal, `SELECT balance FROM users WHERE id = ?`, userID)
+	credit, debit, crdr := delta, 0.0, 1
+	if delta < 0 {
+		credit, debit, crdr = 0.0, -delta, 2
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO account_statement (user_id, narration, credit, debit, balance_after, account_type, crdr)
+		 VALUES (?,?,?,?,?,3,?)`, userID, narration, credit, debit, bal, crdr); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	// Balance changed → nudge the user's panel so the header/footer show live coins
+	// (and re-read exposure). Fire-and-forget; the client re-reads /api/user/me on
+	// this signal. Joined room: USER_UPDATE_DATA:<userID>.
+	if m.pub != nil {
+		_ = m.pub.Publish(ctx, fmt.Sprintf("USER_UPDATE_DATA:%d", userID),
+			map[string]any{"type": "USER_UPDATE_DATA", "userId": userID, "balance": bal})
+	}
+	return bal, nil
 }
 
 // Register mounts betting routes.
@@ -77,6 +136,7 @@ func (m *Module) Register(api fiber.Router, requireAuth fiber.Handler) {
 	// Manual bet entry (My Markets) is Super Duper Admin only — not for lower panels.
 	g.Post("/bets", middleware.RequireUsetype(domain.SuperDuperAdmin), m.place)
 	g.Get("/bets", m.list)
+	g.Get("/deleted", m.listDeleted)   // voided bets (Deleted Bets filter on Bet List Live)
 	g.Delete("/bets/:id", m.deleteBet) // move a bet to deleted_bets (doc §15 id=5)
 	g.Get("/book", m.book)
 	g.Get("/count-per-user", m.countPerUser)
@@ -101,6 +161,19 @@ func (m *Module) deleteBet(c *fiber.Ctx) error {
 	if _, err := m.bets.DeleteOne(c.Context(), bson.M{"_id": id}); err != nil {
 		return httpx.Internal(c, "failed to delete bet")
 	}
+
+	// Voiding an OPEN bet refunds the liability the bettor had held against balance
+	// (with a ledger row) and releases the ancestors' exposure. A settled bet is
+	// already realised, so nothing is refunded.
+	if settled, _ := bet["settled"].(bool); !settled {
+		uid := asInt64(bet["userId"])
+		liab := asFloat(bet["exposure"])
+		if uid > 0 && liab > 0 {
+			_, _ = m.ledgerMove(c.Context(), uid, liab, "Bet void refund "+asString(bet["marketId"]))
+			m.exposure.Apply(c.Context(), uid, liab, -1)
+		}
+	}
+
 	marketID, _ := bet["marketId"].(string)
 	_ = m.pub.Publish(c.Context(), "MARKET_UPDATE_DATA:"+marketID, fiber.Map{"type": "BET_DELETED", "id": id.Hex()})
 	return httpx.OK(c, fiber.Map{"deleted": true})
@@ -168,6 +241,18 @@ func (m *Module) place(c *fiber.Ctx) error {
 		return httpx.Internal(c, "match failed")
 	}
 
+	// Deduct-on-placement: the bettor's liability is debited from balance the moment
+	// the bet is placed, with a ledger row, so balance is always reconstructable.
+	if res.Exposure > 0 {
+		narr := fmt.Sprintf("Bet placed %s %s @ %.2f x %.0f", body.MarketID, body.Selection, body.Price, body.Stake)
+		if _, err := m.ledgerMove(c.Context(), userID, -res.Exposure, narr); err != nil {
+			if errors.Is(err, errInsufficient) {
+				return httpx.BadRequest(c, "insufficient balance for this bet")
+			}
+			return httpx.Internal(c, "failed to debit balance")
+		}
+	}
+
 	bet := Bet{
 		UserID: userID, MatchID: body.MatchID, MarketID: body.MarketID, BetType: body.BetType,
 		Selection: body.Selection, Side: body.Side, Price: body.Price, Stake: body.Stake,
@@ -177,8 +262,8 @@ func (m *Module) place(c *fiber.Ctx) error {
 		return httpx.Internal(c, "failed to persist bet")
 	}
 
-	// Add this bet's liability to the bettor and each ancestor (incremental,
-	// per-level live exposure).
+	// Hold the ANCESTORS' telescoped share of the book as live exposure (the
+	// bettor's own liability is already held in balance, above).
 	m.exposure.Apply(c.Context(), userID, res.Exposure, +1)
 
 	// Notify everyone watching this market in real time.
@@ -203,6 +288,19 @@ func (m *Module) list(c *fiber.Ctx) error {
 	if uid := c.QueryInt("userId"); uid > 0 {
 		filter["userId"] = int64(uid)
 	}
+	// Settled state. Default is "open" — Bet List Live shows PENDING bets only.
+	// "settled" shows decided bets, "all" shows both.
+	switch c.Query("settled") {
+	case "settled", "true", "1":
+		filter["settled"] = true
+	case "all":
+		// no settled constraint
+	default:
+		filter["settled"] = bson.M{"$ne": true}
+	}
+	if rng := dateRange(c.Query("from"), c.Query("to")); rng != nil {
+		filter["createdAt"] = rng
+	}
 	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}).SetLimit(200)
 	cur, err := m.bets.Find(c.Context(), filter, opts)
 	if err != nil {
@@ -213,6 +311,96 @@ func (m *Module) list(c *fiber.Ctx) error {
 		return httpx.Internal(c, "failed to decode bets")
 	}
 	return httpx.OK(c, out)
+}
+
+// listDeleted returns voided bets (the Deleted Bets view of Bet List Live).
+// deleted_bets rows carry every original field plus deletedAt / deletedBy, so we
+// decode into bson.M to surface those audit fields to the UI.
+func (m *Module) listDeleted(c *fiber.Ctx) error {
+	filter := bson.M{}
+	if matchID := c.QueryInt("matchId"); matchID > 0 {
+		filter["matchId"] = int64(matchID)
+	}
+	if uid := c.QueryInt("userId"); uid > 0 {
+		filter["userId"] = int64(uid)
+	}
+	if rng := dateRange(c.Query("from"), c.Query("to")); rng != nil {
+		filter["deletedAt"] = rng
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "deletedAt", Value: -1}}).SetLimit(200)
+	cur, err := m.deletedBets.Find(c.Context(), filter, opts)
+	if err != nil {
+		return httpx.Internal(c, "failed to load deleted bets")
+	}
+	var out []bson.M
+	if err := cur.All(c.Context(), &out); err != nil {
+		return httpx.Internal(c, "failed to decode deleted bets")
+	}
+	if out == nil {
+		out = []bson.M{}
+	}
+	return httpx.OK(c, out)
+}
+
+// asFloat / asInt64 / asString coerce loosely-typed BSON values (a decoded
+// bson.M may carry numbers as int32/int64/float64 depending on how they were
+// stored) into the Go type we need.
+func asFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case int:
+		return float64(n)
+	}
+	return 0
+}
+
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int32:
+		return int64(n)
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	}
+	return 0
+}
+
+func asString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// dateRange builds a Mongo range filter from yyyy-mm-dd query params. The "to"
+// day is included in full (extended to end-of-day). Returns nil when neither is set.
+func dateRange(from, to string) bson.M {
+	const layout = "2006-01-02"
+	rng := bson.M{}
+	if from != "" {
+		if t, err := time.Parse(layout, from); err == nil {
+			rng["$gte"] = t
+		}
+	}
+	if to != "" {
+		if t, err := time.Parse(layout, to); err == nil {
+			rng["$lte"] = t.Add(24 * time.Hour)
+		}
+	}
+	if len(rng) == 0 {
+		return nil
+	}
+	return rng
 }
 
 func (m *Module) book(c *fiber.Ctx) error {
