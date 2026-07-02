@@ -73,7 +73,7 @@ export default function ProfitLoss() {
   return (
     <div id="wrapper">
       <div className="container py-3 account-ui">
-        <div className="row g-2 align-items-center justify-content-center account-filter mb-2">
+        <div className="row g-2 align-items-center justify-content-stratch account-filter mb-2">
           <div className="col-md-2 col-6">
             <input
               type="date"
@@ -189,9 +189,9 @@ export default function ProfitLoss() {
                                         <td>{formatDayDate(String(m.MstDate ?? ''))}</td>
                                         <td>
                                           <Link
-                                            to={`/bet-history?matchId=${m.matchId}&marketId=${m.MarketId}&fancyId=${m.fancyId ?? ''}&type=pl`}
+                                            to={`/bet-history?matchId=${m.matchId}&marketId=${m.MarketId}&userId=${m.UserId ?? ''}&username=${m.mstruserid ?? ''}&fancyId=${m.fancyId ?? ''}&type=pl`}
                                           >
-                                            View
+                                            Show Bet
                                           </Link>
                                         </td>
                                       </tr>

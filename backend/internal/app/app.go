@@ -55,9 +55,10 @@ type Deps struct {
 type App struct {
 	Fiber    *fiber.App
 	Identity *identity.Service
-	hub      *realtime.Hub
-	oddsPub  *odds.Publisher
-	expo     *exposure.Tracker
+	hub       *realtime.Hub
+	oddsPub   *odds.Publisher
+	expo      *exposure.Tracker
+	userPanel *userpanel.Module
 }
 
 // Build wires modules and routes. It returns the app ready to serve; call
@@ -119,7 +120,8 @@ func Build(d Deps) *App {
 	// Registered BEFORE identity so its PUBLIC /user/login isn't caught by the global
 	// requireAuth the identity module mounts on /api (its `api.Group("", requireAuth)`).
 	// /user/me keeps its own explicit requireAuth.
-	userpanel.New(identitySvc, d.MySQL, d.Mongo).Register(api, requireAuth)
+	userPanelMod := userpanel.New(identitySvc, d.MySQL, d.Mongo, hub)
+	userPanelMod.Register(api, requireAuth)
 	identity.NewHTTP(identitySvc).Register(api, requireAuth)
 	wallet.New(d.MySQL, identityStore, hub).Register(api, requireAuth)
 	requests.New(d.MySQL, identityStore).Register(api, requireAuth)
@@ -165,7 +167,7 @@ func Build(d Deps) *App {
 
 	realtime.New(hub).Register(f)
 
-	return &App{Fiber: f, Identity: identitySvc, hub: hub, oddsPub: oddsPub, expo: expoTracker}
+	return &App{Fiber: f, Identity: identitySvc, hub: hub, oddsPub: oddsPub, expo: expoTracker, userPanel: userPanelMod}
 }
 
 // StartBackground launches long-running loops (the realtime hub subscription and
@@ -173,7 +175,8 @@ func Build(d Deps) *App {
 func (a *App) StartBackground(ctx context.Context) {
 	go a.hub.Run(ctx)
 	go a.oddsPub.Run(ctx)
-	go a.expo.Run(ctx) // batched MySQL flush of live exposure deltas
+	go a.expo.Run(ctx)                 // batched MySQL flush of live exposure deltas
+	go a.userPanel.StartFancyPoller(ctx) // publish live third-party fancy rates to FANCY:<matchId>
 }
 
 // seedOdds re-populates the Redis published-odds set and each market's runner

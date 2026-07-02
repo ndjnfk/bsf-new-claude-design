@@ -245,7 +245,24 @@ function EventContent({ eventId, marketId, sportId }: { eventId: string; marketI
 
   const quickStakes: number[] = Array.isArray(user?.stakes) ? user.stakes.map(Number) : []
   const view: BetSlipView | null = slip
-    ? { runnerName: slip.runnerName, side: slip.side, price: slip.price, stake: slip.stake, profit: slip.profit, isFancy: slip.isFancy }
+    ? {
+        // Market name = the clicked market (fancy → "Fancy"); team = clicked runner/
+        // fancy head; rate = clicked price; BAT reflects the clicked side.
+        marketName: slip.isFancy ? 'Fancy' : slip.market?.market_name ?? '',
+        runnerName: slip.runnerName,
+        side: slip.side,
+        bat: slip.isFancy
+          ? slip.side === 'back'
+            ? 'YES'
+            : 'NO'
+          : slip.side === 'back'
+            ? 'LAGAI'
+            : 'KHAI',
+        price: slip.price,
+        stake: slip.stake,
+        profit: slip.profit,
+        isFancy: slip.isFancy,
+      }
     : null
 
   if (loading) return <Loader label="Loading event…" />
@@ -293,8 +310,6 @@ function EventContent({ eventId, marketId, sportId }: { eventId: string; marketI
               runChanged={runChanged}
               onStake={setStake}
               onQuickStake={setStake}
-              onInc={() => setStake((slip?.stake ?? 0) + 1)}
-              onDec={() => setStake(Math.max(0, (slip?.stake ?? 0) - 1))}
               onPlace={() => void placeBet()}
               onClear={clearBet}
             />

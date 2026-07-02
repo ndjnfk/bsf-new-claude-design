@@ -94,7 +94,7 @@ export default function AccountStatement() {
         {/* <h5 className="mb-3">{showFilter ? 'Account Statement' : 'Ledger'}</h5> */}
 
         {showFilter ? (
-          <div className="row g-2 align-items-center justify-content-center account-filter mb-3">
+          <div className="row g-2 align-items-center justify-content-stratch account-filter mb-3">
             <div className="col-md-2 col-6 mb-sm-1">
               <input
                 name="date"

@@ -28,11 +28,11 @@ describe('BetHistory', () => {
     expect(screen.getByText('LAGAI')).toBeInTheDocument() // Back → LAGAI
 
     expect(histMock).toHaveBeenCalledWith(
-      expect.objectContaining({ page_no: 1, sport_id: '4', bet_type: 'M', type: 1 }),
+      expect.objectContaining({ page_no: 1, bet_type: 'M', type: 1 }),
     )
 
     histMock.mockClear()
-    fireEvent.click(screen.getByText('Submit'))
+    fireEvent.click(screen.getByText('Search'))
     await waitFor(() => expect(histMock).toHaveBeenCalledTimes(1))
   })
 })

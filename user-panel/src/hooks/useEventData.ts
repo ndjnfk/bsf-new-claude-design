@@ -9,6 +9,7 @@ import {
   type Runner,
 } from '../services/bettingApi'
 import { parseRunners } from '../services/dashboardApi'
+import { liveSocket } from '../services/liveSocket'
 import {
   socketService,
   type SocketHandler,
@@ -241,6 +242,24 @@ export function useEventData(
       if (reload) socketService.connect()
     })
 
+    // ── Native-WS live fancy rates ────────────────────────────────────────────
+    // The Go backend publishes FANCY:<matchId> over /ws; the legacy socket.io
+    // client above never reaches it, so live fancy rates come through liveSocket.
+    liveSocket.connect()
+    liveSocket.join(`FANCY:${matchId}`)
+    const offLiveFancy = liveSocket.onMessage((msg) => {
+      const m = msg as { type?: string; marketId?: string | number; data?: unknown[] }
+      if (!m || m.type !== 'FANCY_DATA' || String(m.marketId) !== String(matchId)) return
+      socketService.updateFancyData(
+        fanciesRef.current as unknown as IndianFancy[],
+        (m.data ?? []) as never,
+        (optsRef.current.activeFancyRef?.current ?? null) as unknown as IndianFancy | null,
+        optsRef.current.sideRef?.current ?? null,
+        null,
+      )
+      bump()
+    })
+
     return () => {
       active = false
       refreshRef.current = false
@@ -253,6 +272,8 @@ export function useEventData(
       socketService.off(`MATCH_UPDATE_DATA:${matchId}`, onMatchUpdate)
       socketService.off(`UPDATE_FANCY${matchId}`, onUpdateFancy)
       unsubReload()
+      offLiveFancy()
+      liveSocket.leave(`FANCY:${matchId}`)
       socketService.manageRoom(fancyRoomsRef.current, false)
       socketService.leaveRoom(`FANCY${matchId}`, '')
       socketService.leaveRoom(`UPDATE_MARKETS${matchId}`, '')

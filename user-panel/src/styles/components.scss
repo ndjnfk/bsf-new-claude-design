@@ -4740,6 +4740,16 @@ img {
   letter-spacing: 0.5px;
   background: #ececec;
 }
+/* "Result Awaiting" is shown title-case (not uppercase) on a plain background. */
+.event-market-table .fancy-result-awaiting {
+  text-transform: none;
+  background: transparent;
+}
+/* Session sub-tab row sits just under the main fancy tabs. */
+.fancy-subtabs {
+  flex-wrap: wrap;
+  gap: 4px;
+}
 
 @media (max-width: 575.98px) {
   .event-market-head {

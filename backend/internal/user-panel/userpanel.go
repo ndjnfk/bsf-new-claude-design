@@ -13,6 +13,7 @@ import (
 
 	"bsf2020/internal/identity"
 	"bsf2020/pkg/domain"
+	"bsf2020/pkg/events"
 	"bsf2020/pkg/middleware"
 )
 
@@ -21,14 +22,25 @@ var defaultStakes = []int{100, 500, 1000, 2000, 5000}
 
 // Module is the User Panel HTTP module.
 type Module struct {
-	ident *identity.Service
-	db    *sqlx.DB
-	bets  *mongo.Collection // bettor's bets (Mongo) — powers the per-match ledger
+	ident        *identity.Service
+	db           *sqlx.DB
+	bets         *mongo.Collection // bettor's bets (Mongo) — powers the per-match ledger
+	userLoginLog *mongo.Collection // enriched Player login records (Login History page)
+	userPwdLog   *mongo.Collection // Player password-change records (Password History page)
+	pub          events.Publisher  // native-WS publisher for live fancy rates
 }
 
-// New builds the module.
-func New(ident *identity.Service, db *sqlx.DB, mongoDB *mongo.Database) *Module {
-	return &Module{ident: ident, db: db, bets: mongoDB.Collection("bets")}
+// New builds the module. pub may be nil (realtime disabled) — the fancy poller is
+// simply skipped in that case.
+func New(ident *identity.Service, db *sqlx.DB, mongoDB *mongo.Database, pub events.Publisher) *Module {
+	return &Module{
+		ident:        ident,
+		db:           db,
+		bets:         mongoDB.Collection("bets"),
+		userLoginLog: mongoDB.Collection("user_login_history"),
+		userPwdLog:   mongoDB.Collection("user_password_history"),
+		pub:          pub,
+	}
 }
 
 // Register mounts the User Panel routes under /api/user. login is public; the rest
@@ -56,6 +68,12 @@ func (m *Module) Register(api fiber.Router, requireAuth fiber.Handler) {
 	// Poker page: launch URLs + the casino-limit gate.
 	g.Get("/poker/getUrl", requireAuth, m.pokerGetUrl)
 	g.Get("/poker/getUserCasinoLimit", requireAuth, m.pokerUserCasinoLimit)
+	// Login History page: the Player's own login records.
+	g.Get("/loginHistory", requireAuth, m.loginHistory)
+	// Password History page: the Player's own password-change records.
+	g.Get("/passwordHistory", requireAuth, m.passwordHistory)
+	// Bet History page: the Player's own bets (matched / past).
+	g.Post("/betHistory", requireAuth, m.betHistory)
 }
 
 // playerUser builds the Adonis-shaped user object the React panel consumes.
@@ -107,6 +125,9 @@ func (m *Module) changePassword(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).
 			JSON(fiber.Map{"status": false, "message": "failed to change password"})
 	}
+	// Record the change for the Password History page (self-change: target and
+	// changer are the same Player; ip from the request, created_at = server time).
+	m.recordPasswordChange(uc.UserID, uc.Username, uc.Username, c.IP())
 	return c.JSON(fiber.Map{"status": true, "message": "Password has been changed."})
 }
 
@@ -136,6 +157,10 @@ func (m *Module) login(c *fiber.Ctx) error {
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		// Best-effort geolocation the panel enriches the login with (may be empty).
+		City   string `json:"city"`
+		Region string `json:"region"`
+		Org    string `json:"org"`
 	}
 	if err := c.BodyParser(&body); err != nil || body.Username == "" || body.Password == "" {
 		return c.Status(fiber.StatusBadRequest).
@@ -166,6 +191,10 @@ func (m *Module) login(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).
 			JSON(fiber.Map{"status": false, "message": "this panel is for players only"})
 	}
+
+	// Record the login for the Login History page (ip from the request, device from
+	// the User-Agent, city/region/org from the payload).
+	m.recordUserLogin(u.ID, u.Mstruserid, c.IP(), c.Get(fiber.HeaderUserAgent), body.City, body.Region, body.Org)
 
 	// change_password=true would force the panel to the change-password screen on
 	// login; default to false so the user lands in the app. Wire to a real

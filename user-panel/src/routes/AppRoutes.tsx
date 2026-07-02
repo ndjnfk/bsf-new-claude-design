@@ -40,7 +40,7 @@ const DreamCasinoGame = lazy(() => import('../pages/DreamCasinoGame'))
 const GamehubCasino = lazy(() => import('../pages/GamehubCasino'))
 const GamehubCasinoGame = lazy(() => import('../pages/GamehubCasinoGame'))
 const PasswordHistory = lazy(() => import('../pages/PasswordHistory'))
-const LoginHistory = lazy(() => import('../pages/LoginHistory'))
+const LoginHistoryPage = lazy(() => import('../pages/LoginHistoryPage'))
 const Rules = lazy(() => import('../pages/Rules'))
 const Userhome = lazy(() => import('../pages/Userhome'))
 const Setting = lazy(() => import('../pages/Setting'))
@@ -72,6 +72,9 @@ export function AppRoutes() {
             {/* Poker is a full-screen game launcher: it renders the Header itself
                 and deliberately has NO Sidebar/Footer, so it sits outside AppLayout. */}
             <Route path="poker" element={<PokerPage />} />
+            {/* Login/Password History render their own Header (no Sidebar/Footer). */}
+            <Route path="login-history" element={<LoginHistoryPage />} />
+            <Route path="password-history" element={<PasswordHistory />} />
             <Route element={<AppLayout />}>
               <Route path="home" element={<Home />} />
               <Route path="in-play" element={<InPlay />} />
@@ -98,8 +101,6 @@ export function AppRoutes() {
               <Route path="dreamCasino/game/:game_code" element={<DreamCasinoGame />} />
               <Route path="gamehubCasino" element={<GamehubCasino />} />
               <Route path="gamehubCasino/game/:gameId" element={<GamehubCasinoGame />} />
-              <Route path="password-history" element={<PasswordHistory />} />
-              <Route path="login-history" element={<LoginHistory />} />
               <Route path="rules" element={<Rules />} />
               <Route path="userhome" element={<Userhome />} />
               <Route path="setting" element={<Setting />} />

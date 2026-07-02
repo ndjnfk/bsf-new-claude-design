@@ -1,15 +1,20 @@
+import './BetSlip.scss'
+
 export type BetSlipView = {
-  runnerName: string
+  marketName: string
+  runnerName: string // TEAM (runner / fancy head)
   side: 'back' | 'lay'
+  bat: string // LAGAI / KHAI (market) or YES / NO (fancy)
   price: number
   stake: number
   profit: number
   isFancy: boolean
 }
 
-// Controlled bet slip: odds, stake (with quick-stake buttons + inc/dec), live profit,
-// the odds-change countdown, and a place button that is disabled while a bet is in
-// flight (duplicate-/double-submit prevention).
+// Bet slip — a faithful port of the reference pill layout:
+//   Market : … | RATE : … | TEAM : … | BAT : LAGAI/KHAI | AMOUNT [stake] [Done] (countdown)
+//   [100][200][300][500][1000] [⚙] [Cancel]
+// Every field reflects the exact price the user clicked (market, rate, team, side).
 export function BetSlip({
   slip,
   stakes,
@@ -18,8 +23,6 @@ export function BetSlip({
   runChanged,
   onStake,
   onQuickStake,
-  onInc,
-  onDec,
   onPlace,
   onClear,
 }: {
@@ -30,59 +33,63 @@ export function BetSlip({
   runChanged: boolean
   onStake: (v: number) => void
   onQuickStake: (v: number) => void
-  onInc: () => void
-  onDec: () => void
   onPlace: () => void
   onClear: () => void
 }) {
-  const sideClass = slip.side === 'lay' ? 'khai_box_color' : 'lagai_box_color'
+  const batClass = slip.side === 'lay' ? 'bat-khai' : 'bat-lagai'
   return (
-    <div className={`betting-section bet-table desktop_betslip blue-bet ${slip.side}`}>
-      <div className="d-flex justify-content-between align-items-center px-2 py-1">
-        <span className="eventname fw-bold">{slip.runnerName}</span>
-        <span className="countdownHolder fs-12">{countdown}s</span>
-        <button type="button" className="bet-close btn-close" aria-label="Close" onClick={onClear} />
-      </div>
+    <div className={`betslip-wrap ${slip.side}`}>
+      <div className="betslip-bar">
+        <div className="bs-field">
+          <span className="bs-label">Market :</span>
+          <span className="bs-value">{slip.marketName}</span>
+        </div>
+        <div className="bs-field">
+          <span className="bs-label">RATE :</span>
+          <span className="bs-value">{slip.price}</span>
+        </div>
+        <div className="bs-field">
+          <span className="bs-label">TEAM :</span>
+          <span className="bs-value">{slip.runnerName}</span>
+        </div>
+        <div className="bs-field">
+          <span className="bs-label">BAT :</span>
+          <span className={`bs-value ${batClass}`}>{slip.bat}</span>
+        </div>
 
-      {runChanged ? <div className="text-danger fs-12 px-2">Run Changed</div> : null}
-
-      <div className="card-body d-flex align-items-center gap-2 px-2 py-2">
-        <span className={`bl-btn ${sideClass}`}>{slip.price}</span>
-        <button type="button" className="btn btn-sm btn-secondary" onClick={onDec} aria-label="decrease">
-          −
-        </button>
-        <input
-          type="number"
-          className="form-control text-center"
-          style={{ maxWidth: 110 }}
-          value={slip.stake || ''}
-          onChange={(e) => onStake(Number(e.target.value))}
-          placeholder="0"
-        />
-        <button type="button" className="btn btn-sm btn-secondary" onClick={onInc} aria-label="increase">
-          +
-        </button>
-        <span className="ms-auto fs-12">
-          Profit: <b>{slip.profit}</b>
+        <span className="bs-amount-label">AMOUNT</span>
+        <div className="bs-amount">
+          <input
+            type="number"
+            className="bs-stake"
+            placeholder="Stake"
+            value={slip.stake || ''}
+            onChange={(e) => onStake(Number(e.target.value))}
+          />
+          <button type="button" className="bs-done" onClick={onPlace} disabled={isLoading || slip.stake <= 0}>
+            {isLoading ? '…' : 'Done'}
+          </button>
+        </div>
+        <span className="bs-count" aria-label="odds countdown">
+          {countdown}
         </span>
       </div>
 
-      <div className="btn-group flex-wrap px-2 pb-2">
+      <div className="betslip-bar betslip-bar-2">
         {stakes.map((s, i) => (
-          <button type="button" key={`${s}-${i}`} className="btn btn-sm btn-outline-secondary me-1 mb-1" onClick={() => onQuickStake(s)}>
+          <button type="button" key={`${s}-${i}`} className="bs-chip" onClick={() => onQuickStake(s)}>
             {s}
           </button>
         ))}
+        <button type="button" className="bs-gear" aria-label="stake settings">
+          ⚙
+        </button>
+        <button type="button" className="bs-cancel" onClick={onClear}>
+          Cancel
+        </button>
       </div>
 
-      <div className="d-flex gap-2 px-2 pb-2">
-        <button type="button" className="btn btn-secondary flex-grow-1" onClick={onClear} disabled={isLoading}>
-          Clear
-        </button>
-        <button type="button" className="btn btn-success flex-grow-1" onClick={onPlace} disabled={isLoading || slip.stake <= 0}>
-          {isLoading ? 'Placing…' : 'Place Bet'}
-        </button>
-      </div>
+      {runChanged ? <div className="text-danger fs-12 px-2 pt-1">Run Changed</div> : null}
     </div>
   )
 }

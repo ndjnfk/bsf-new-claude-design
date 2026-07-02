@@ -348,6 +348,7 @@ func (m *Module) profitLoss(c *fiber.Ctx) error {
 		rows = append(rows, fiber.Map{
 			"settle_date": r.SettleDate,
 			"matchId":     r.MatchID,
+			"id":          r.MatchID, // record id (== matchId for this aggregation)
 			"EventName":   name,
 			"PnL":         r.PnL,
 		})
@@ -431,6 +432,7 @@ func (m *Module) profitLossByMatch(c *fiber.Ctx) error {
 		}
 	}
 
+	actor := middleware.User(c)
 	out := make([]fiber.Map, 0, len(agg))
 	for _, r := range agg {
 		name := names[r.MarketID]
@@ -445,6 +447,9 @@ func (m *Module) profitLossByMatch(c *fiber.Ctx) error {
 			"MarketId":   r.MarketID,
 			"fancyId":    "",
 			"matchId":    body.MatchID,
+			// Needed by the inner "Show Bet" button (betHistoryFilter params).
+			"UserId":     actor.UserID,
+			"mstruserid": actor.Username,
 		})
 	}
 	return c.JSON(fiber.Map{"data": out})
